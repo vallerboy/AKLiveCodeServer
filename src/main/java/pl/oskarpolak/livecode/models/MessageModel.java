@@ -5,7 +5,7 @@ package pl.oskarpolak.livecode.models;
  */
 public class MessageModel {
     public enum MessageType{
-        REGISTER, DOWNLOAD_REQUEST, UPDATING, DOWNLOAD_RESPONSE, REGISTER_RESPONSE, JOIN, REQUEST_ALL_USER;
+        REGISTER, DISCONNECT, DOWNLOAD_REQUEST, UPDATING, DOWNLOAD_RESPONSE, REGISTER_RESPONSE, JOIN, REQUEST_ALL_USER;
     }
 
     private String toWho;

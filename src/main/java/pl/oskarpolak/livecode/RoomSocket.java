@@ -1,11 +1,9 @@
 package pl.oskarpolak.livecode;
 
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.CloseStatus;
@@ -18,12 +16,10 @@ import pl.oskarpolak.livecode.models.HandshakeInterpreter;
 import pl.oskarpolak.livecode.models.MessageModel;
 import pl.oskarpolak.livecode.models.Room;
 import pl.oskarpolak.livecode.models.User;
-import sun.plugin2.message.Message;
 
 import java.io.IOException;
 import java.lang.reflect.Type;
 import java.nio.ByteBuffer;
-import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -45,8 +41,6 @@ public class RoomSocket extends BinaryWebSocketHandler implements WebSocketConfi
         registry.addHandler(this, "/live/{roomId}")
                 .setAllowedOrigins("*").addInterceptors(new HandshakeInterpreter());
 
-        Room room = new Room("test");
-        roomList.add(room);
     }
 
     @Override
@@ -55,25 +49,36 @@ public class RoomSocket extends BinaryWebSocketHandler implements WebSocketConfi
         MessageModel messageModel = gson.fromJson(new String(message.getPayload().array()),  type);
 
 
+        String roomName = (String) session.getAttributes().get("roomId");
 
-        Room room = roomList.stream()
-                .filter(s -> s.getName().equals(session.getAttributes().get("roomId")))
-                .findAny()
-                .get();
+        Optional<Room> roomExist = roomList.stream()
+                .filter(s -> s.getName().equals(roomName))
+                .findAny();
+
+        Room room = roomExist.get();
 
 
-        Optional<User> user = room.getUserBySession(session.getId());
+
+
+        Optional<User> user = room.getUserBySessionId(session.getId());
+
+        user.ifPresent(s -> System.out.println("User jest!"));
 
         switch (messageModel.getMessageType()){
             case REGISTER: {
                     String nick = messageModel.getContext();
                     if(user.isPresent()){
-                        user.get().setName(nick);
-
                         MessageModel registerResponse = new MessageModel();
                         registerResponse.setMessageType(MessageModel.MessageType.REGISTER_RESPONSE);
+
+                        if(room.getUserList().contains(nick)){
+                            registerResponse.setContext("nickexist");
+                            sendMessage(registerResponse, room.getUserByName(user.get().getName()));
+                            break;
+                        }
+                        user.get().setName(nick);
                         registerResponse.setContext("Pomyslnie ustawiono nick");
-                        sendMessage(registerResponse, user.get());
+                        sendMessage(registerResponse, room.getUserByName(user.get().getName()));
 
                         MessageModel joinMessage = new MessageModel();
                         joinMessage.setMessageType(MessageModel.MessageType.JOIN);
@@ -97,7 +102,32 @@ public class RoomSocket extends BinaryWebSocketHandler implements WebSocketConfi
                     sendMessage(model, user.get());
                     break;
             }
+            case DOWNLOAD_REQUEST: {
+                MessageModel model = new MessageModel();
+                model.setMessageType(MessageModel.MessageType.DOWNLOAD_REQUEST);
+                model.setToWho(room.getUserBySessionId(session.getId()).get().getName());
+                sendMessage(model, room.getUserByName(messageModel.getToWho()));
+                break;
+            }
 
+            case DOWNLOAD_RESPONSE:{
+                MessageModel model = new MessageModel();
+                model.setMessageType(MessageModel.MessageType.DOWNLOAD_RESPONSE);
+                model.setContext(messageModel.getContext());
+                System.out.println("Context: " + messageModel.getContext());
+                sendMessage(model, room.getUserByName(messageModel.getToWho()));
+                break;
+            }
+
+
+            case UPDATING:{
+                MessageModel model = new MessageModel();
+                model.setMessageType(MessageModel.MessageType.UPDATING);
+                model.setContext(messageModel.getContext());
+                model.setToWho(user.get().getName());
+                sendToAllWithoutMe(model, user.get(), room);
+                break;
+            }
         }
 
 
@@ -128,17 +158,29 @@ public class RoomSocket extends BinaryWebSocketHandler implements WebSocketConfi
 
     private void sendToAllWithoutMe(MessageModel messageModel, User user, Room room){
         room.getUserList().stream()
-                .filter(s -> !s.getName().equals(user.getName()))
+                .filter(s -> !s.getSessionId().equals(user.getSessionId()))
                 .forEach(s -> sendMessage(messageModel, s));
     }
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
+        String roomName = (String) session.getAttributes().get("roomId");
+
+        Optional<Room> roomExist = roomList.stream()
+                .filter(s -> s.getName().equals(roomName))
+                .findAny();
+
+        Room room;
+        if(!roomExist.isPresent()){
+            room = new Room(roomName);
+            roomList.add(room);
+            System.out.println("Utworzono nowy pokój: " + roomName);
+        }
         roomList.stream()
-                .filter(s -> s.getName().equals(session.getAttributes().get("roomId")))
+                .filter(s -> s.getName().equals(roomName))
                 .findAny()
                 .ifPresent(s -> {
-                    if(!s.getUserBySession(session.getId()).isPresent()){
+                    if(!s.getUserBySessionId(session.getId()).isPresent()){
                         s.addUser(new User(session));
                         System.out.println("Dodaje usera");
                     }
@@ -155,10 +197,18 @@ public class RoomSocket extends BinaryWebSocketHandler implements WebSocketConfi
                 .filter(s -> s.getName().equals(session.getAttributes().get("roomId")))
                 .findAny()
                 .ifPresent(s -> {
-                    if(!s.getUserBySession(session.getId()).isPresent()){
-                        s.removeUser(s.getUserBySession(session.getId()).get());
+                    if(s.getUserBySessionId(session.getId()).isPresent()){
+                        sendDisconnect(s, s.getUserBySessionId(session.getId()).get().getName());
+                        s.removeUser(s.getUserBySessionId(session.getId()).get());
                     }
                 });
         System.out.println("Odchodzi user");
+    }
+
+    private void sendDisconnect(Room room, String name) {
+        MessageModel messageModel = new MessageModel();
+        messageModel.setMessageType(MessageModel.MessageType.DISCONNECT);
+        messageModel.setToWho(name);
+        sendToAllWithoutMe(messageModel, room.getUserByName(name), room);
     }
 }

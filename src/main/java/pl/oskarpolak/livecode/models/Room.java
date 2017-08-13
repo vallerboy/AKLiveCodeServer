@@ -26,15 +26,17 @@ public class Room {
     }
 
     public User getUserByName(String name){
+        System.out.println("Name z getUserByName: " + name);
         return userList.stream()
                 .filter(s -> s.getName().equals(name))
                 .findAny().get();
     }
 
-    public Optional<User> getUserBySession(String sessionId){
+    public Optional<User> getUserBySessionId(String sessionId){
         return userList.stream()
                 .filter(s -> s.getSessionId().equals(sessionId))
                 .findAny();
+
     }
 
     public String getName() {
